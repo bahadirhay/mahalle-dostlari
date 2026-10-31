@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mahalle Dostları</title>
+<style>
+  :root{--bg:#f4f1ea;--ink:#2b2a27;--card:#fff;--accent:#e07a3f;--green:#5b9a5a;--red:#c0483a;--line:#ddd6c6}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,"Segoe UI",sans-serif;line-height:1.45}
+  #app{max-width:820px;margin:0 auto;padding:12px 16px 24px}
+  h1{font-size:1.25rem;margin:4px 0 8px}
+  .top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .top button{padding:6px 12px;white-space:nowrap}
+  .goal{background:#fff6ee;border:1px solid var(--accent);border-radius:10px;padding:8px 12px;margin-bottom:8px;font-weight:600;min-height:2.4em}
+  .steps{list-style:none;padding:0!important}
+  .steps li{margin:8px 0}
+  #hud{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:5px 10px;font-size:.88rem;display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .meter{width:80px;height:8px;background:#e8e2d4;border-radius:5px;overflow:hidden}
+  .meter i{display:block;height:100%;background:var(--green);width:0}
+  #timebar i{background:var(--accent)}
+  #stage{position:relative;border:2px solid var(--line);border-radius:12px;overflow:hidden;background:#b9dc95}
+  canvas{display:block;width:100%;height:auto;touch-action:none}
+  #toast{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);max-width:90%;background:rgba(30,30,30,.88);color:#fff;padding:8px 14px;border-radius:10px;font-size:.9rem;opacity:0;transition:opacity .25s;pointer-events:none;text-align:center}
+  #toast.show{opacity:1}
+  #overlay{position:absolute;inset:0;background:rgba(20,20,20,.5);display:flex;align-items:center;justify-content:center;padding:12px;overflow:auto}
+  #overlay[hidden]{display:none}
+  .card{background:var(--card);border-radius:14px;padding:18px 20px;max-width:500px;width:100%;box-shadow:0 8px 30px rgba(0,0,0,.3)}
+  .card h2{margin:0 0 8px;font-size:1.15rem}
+  .card p{margin:6px 0}
+  .card ul{margin:6px 0;padding-left:20px}
+  .btns{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 12px;text-align:left}
+  button:hover{border-color:var(--accent);background:#fff6ee}
+  .btns button.primary{background:var(--accent);color:#fff;border-color:var(--accent);text-align:center;font-weight:600}
+  .up{color:var(--green);font-weight:600}.down{color:var(--red);font-weight:600}
+  .warn{color:var(--red)}
+  .fact{background:#fff6ee;border-left:4px solid var(--accent);padding:8px 10px;border-radius:6px;font-size:.92rem}
+  #bar{display:flex;align-items:center;gap:8px;margin-top:8px}
+  #hint{flex:1;font-size:.92rem;min-height:1.4em}
+  #bar button{padding:8px 14px;text-align:center}
+  .help{font-size:.82rem;color:#6b675d;margin-top:10px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="top"><h1>🐾 Mahalle Dostları</h1><button id="bHelp">❓ Oyun açıklaması</button></div>
+  <div class="goal" id="goal"></div>
+  <div id="hud">
+    <div class="chip">📅 Gün <b id="hDay">1</b>/5</div>
+    <div class="chip">⏱ <div class="meter" id="timebar"><i id="hTime"></i></div></div>
+    <div class="chip">💰 <b id="hMoney">0</b>₺</div>
+    <div class="chip">🍖 Mama <b id="hFood">0</b>/8</div>
+    <div class="chip">🤝 Destek <div class="meter"><i id="hSup"></i></div></div>
+    <div class="chip" id="hCarry" hidden></div>
+  </div>
+  <div id="stage">
+    <canvas id="c" width="800" height="480"></canvas>
+    <div id="toast"></div>
+    <div id="overlay" hidden></div>
+  </div>
+  <div id="bar">
+    <span id="hint"></span>
+    <button id="bE">E · Etkileşim</button>
+    <button id="bQ">Q · Bırak</button>
+  </div>
+  <p class="help">Hareket: ok tuşları / WASD (ya da ekrana dokun) · E veya Boşluk: etkileşim · Q: kucaktaki hayvanı bırak</p>
+</div>
+
+<script>
+const W = 800, H = 480;
+const DAYS = 5, DAY_LEN = 60, HUNGER = 0.6, MAX_FOOD = 8;
+const FONT = '"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const shuffle = arr => arr.map(v => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map(x => x[1]);
+
+const NAMES = ['Pamuk', 'Tekir', 'Karamel', 'Boncuk', 'Zeytin', 'Mırmır', 'Çomar', 'Paşa', 'Duman', 'Fındık', 'Limon', 'Şans', 'Minnoş', 'Köfte', 'Badem', 'Zeus'];
+
+const BUILD = {
+  market: { x: 90, y: 85, e: '🏪', n: 'Market' },
+  vet: { x: 710, y: 85, e: '🏥', n: 'Veteriner' },
+  board: { x: 400, y: 80, e: '📋', n: 'İlan panosu' },
+};
+
+const NPCS = [
+  { id: 'hasan', name: 'Hasan Amca', e: '🧓', x: 175, y: 180, d: [
+    { t: 'Kapımın önünde sürekli kediler bekliyor, müşteriler çekiniyor. Ne yapacağız bunlara?', c: [
+      { t: 'Köşeye bir mama ve su kabı koyalım, kapıdan uzaklaşırlar. Siz de bir bağış kutusu koyar mısınız?', s: 12, r: 'Hasan Amca sakalını sıvazladı: “Hmm, fena fikir değil. Kutuyu tezgâhın yanına koyarım.”' },
+      { t: 'Müşteriler idare etsin, hayvanlar burada büyüdü.', s: -4, r: 'Hasan Amca omuz silkti: “Sen bilirsin evladım, ama şikâyetler artarsa ben karışmam.”' },
+      { t: 'Kapının önünü ben her gün temizlerim.', s: 5, r: '“Sağ ol, bu sorumluluk bilincin hoşuma gitti.”' },
+    ] },
+    { t: 'Bağış kutusuna kim para atar ki? Herkesin kendi derdi var.', c: [
+      { t: 'Tedavi ettirdiğimiz hayvanların fotoğrafını kutunun yanına asarsak insanlar sonucu görür.', s: 10, r: '“Doğru, insanlar işe yaradığını görünce destek olur.”' },
+      { t: 'Boş verin, ben hallederim.', s: -3, r: '“Peki… ama tek başına zorlanırsın.”' },
+      { t: 'Başlangıç olarak kutuya kendi cebimden 10₺ koyayım.', s: 6, m: -10, r: 'Hasan Amca etkilendi: “Madem sen başladın, ben de bakarım.” (−10₺)' },
+    ] },
+    { t: 'Kış yaklaşıyor. Kediler üşür mü acaba?', c: [
+      { t: 'Kapının yanına karton ve battaniyeden küçük bir kulübe yapalım.', s: 10, r: '“Ben kartonu getiririm, sen battaniyeyi bul!”' },
+      { t: 'Kediler idare eder.', s: -4, r: '“Hmm, soğukta zorlanırlar ama…”' },
+      { t: 'Bilmiyorum, araştırırım.', s: 2, r: '“Araştır da bize de anlat.”' },
+    ] },
+  ] },
+  { id: 'ayse', name: 'Ayşe Hanım', e: '👵', x: 600, y: 200, d: [
+    { t: 'Bu kediler gece bahçemde kavga ediyor, gözüme uyku girmiyor! Hepsi toplansın artık.', c: [
+      { t: 'Sizi anlıyorum. Kısırlaştırılan hayvanlar çok daha sakin olur; hepsini veterinere götürüyorum.', s: 12, r: 'Ayşe Hanım düşündü: “Peki, ama çabuk olsun. Yardımım gerekirse söylersin.”' },
+      { t: 'Onlar da bu mahallenin sakinleri, alışın artık.', s: -8, r: 'Ayşe Hanım kaşlarını çattı ve başını çevirdi.' },
+      { t: 'Bir bakarım.', s: 0, r: '“Bakarsın tabii…” diye mırıldandı.' },
+    ] },
+    { t: 'Dün sabah o köpek bana havladı, çok korktum!', c: [
+      { t: 'Özür dilerim. Aşılı ve kısırlaştırılmış köpekler genelde daha sakin olur, ben ilgileneceğim.', s: 10, r: '“Teşekkür ederim, içim rahatladı.”' },
+      { t: 'Köpekten korkulur mu hiç?', s: -7, r: 'Ayşe Hanım kırılmış görünüyor.' },
+      { t: 'Yavaş hareket edip bağırmazsanız çoğu zaman sakinleşirler.', s: 4, r: '“Bir deneyeyim bakalım.”' },
+    ] },
+    { t: 'Geçen gün yavru kedileri gördüm, çok tatlıydılar…', c: [
+      { t: 'Sahiplenmeyi düşünür müsünüz? Aşılı ve kısırlaştırılmış olarak getiririm.', s: 10, r: 'Ayşe Hanım gülümsedi: “Düşünürüm, ama önce hepsi sağlıklı olsun.”' },
+      { t: 'Evet, çok tatlılar!', s: 3, r: '“Hepsi birer cici!”' },
+      { t: 'Tatlı olmaları yetmez, bakım gerekir.', s: 1, r: '“Haklısın, ciddi iş.”' },
+    ] },
+  ] },
+  { id: 'cocuk', name: 'Çocuklar', e: '🧒', x: 400, y: 235, d: [
+    { t: 'Merhaba! Bu yavru kediye biz de mama verebilir miyiz?', c: [
+      { t: 'Tabii! Ama tuzlu ve baharatlı yemekler zararlı; mama ve temiz su en iyisi.', s: 12, f: 1, r: 'Çocuklar sevinçle zıpladı! Sana bir paket mama getirdiler. (+1 mama)' },
+      { t: 'Dokunmayın, hastalık bulaştırır!', s: -5, r: 'Çocuklar üzülüp uzaklaştı.' },
+      { t: 'Büyüklerinize sorun.', s: 2, r: '“Tamam, soracağız!”' },
+    ] },
+    { t: 'Biz bir hayvan sahiplenmek istiyoruz ama annem “olmaz” dedi.', c: [
+      { t: 'Sahiplenmek ciddi bir sorumluluk: aşı, kısırlaştırma, bakım. Annenle birlikte ilan panosuna gelin.', s: 10, r: '“Annemi ikna etmek için plan yapacağız!”' },
+      { t: 'Annene aldırma, alın gitsin.', s: -6, r: 'Çocuklar şaşırdı, “Ama annem kızar…” dedi.' },
+      { t: 'Belki biraz büyüyünce.', s: 1, r: '“Tamam, bekleriz.”' },
+    ] },
+    { t: 'Bugün okulda sokak hayvanları projesi yaptık!', c: [
+      { t: 'Harika! Bir mama toplama kutusu yapıp mahalleye koyabilir misiniz?', s: 10, f: 2, r: 'Çocuklar hemen kutu yapmaya koştu, bir kısmını sana verdiler. (+2 mama)' },
+      { t: 'Güzel olmuş.', s: 2, r: '“Teşekkürler!”' },
+      { t: 'Önce ödevinize bakın.', s: -2, r: '“Hep böyle diyorlar…”' },
+    ] },
+  ] },
+];
+
+const FACTS = [
+  'Kısırlaştırma, sokak hayvanı nüfusunu şiddet kullanmadan kontrol etmenin en etkili yoludur. Hayvanlar aşılanıp kısırlaştırıldıktan sonra yaşadıkları yere geri bırakılır.',
+  'Aşılanan hayvan hem kendini hem de insanları bulaşıcı hastalıklardan korur.',
+  'Su, mama kadar önemlidir. Yaz ve kış temiz su kabı bulundurmak hayat kurtarır.',
+  'Tuzlu ve baharatlı yemekler, çikolata ve soğan kedi ve köpekler için zararlıdır.',
+  '5199 sayılı Hayvanları Koruma Kanunu hayvanlara eziyet etmeyi yasaklar. Hayvana kötü davranan kişi yasal olarak sorumludur.',
+  'Sahiplenmek bir sorumluluktur: bakım, aşı ve veteriner masrafı yıllarca sürer. Satın almak yerine sahiplenmek sokaktaki bir canı kurtarır.',
+  'Tek kişi her şeyi yapamaz. Komşular, esnaf ve çocuklar işin içine girince çözüm büyür.',
+];
+
+let G, pool;
+const keys = {};
+
+function newGame() {
+  pool = shuffle(NAMES);
+  G = {
+    day: 1, money: 150, food: 3, support: 10, time: DAY_LEN, state: 'menu',
+    player: { x: 400, y: 260, carry: null, tx: null, ty: null },
+    animals: [], bowls: [{ x: 190, y: 330, lvl: 0 }, { x: 400, y: 405, lvl: 0 }, { x: 620, y: 330, lvl: 0 }],
+    adopted: 0, lost: 0, talked: {}, talkCount: {}, log: [],
+  };
+  for (let i = 0; i < 4; i++) addAnimal(false);
+}
+
+const live = () => G.animals.filter(a => !a.gone);
+
+function addAnimal(baby) {
+  const a = {
+    name: pool.length ? pool.pop() : 'Dost' + (G.animals.length + 1),
+    type: Math.random() < 0.6 ? 'cat' : 'dog',
+    x: rand(60, 740), y: rand(180, 440),
+    hunger: baby ? 55 : rand(15, 45),
+    sick: false, sickDays: 0, vacc: false, neut: false, gone: false,
+    born: baby ? G.day : 0, tx: null, ty: null, wait: rand(0, 3), eatCd: 0,
+  };
+  G.animals.push(a);
+  return a;
+}
+
+/* ---------- mesaj / bildirim ---------- */
+let toastTimer;
+function say(txt) {
+  const t = $('toast');
+  t.textContent = txt;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 4200);
+}
+function note(txt) { G.log.push(txt); say(txt); }
+
+/* ---------- ekran katmanı ---------- */
+function overlay(html, buttons) {
+  const o = $('overlay');
+  o.innerHTML = '<div class="card">' + html + '<div class="btns"></div></div>';
+  const box = o.querySelector('.btns');
+  buttons.forEach((x, i) => {
+    const el = document.createElement('button');
+    el.textContent = x.t;
+    if (x.primary) el.className = 'primary';
+    el.onclick = () => { o.hidden = true; x.fn && x.fn(); };
+    box.appendChild(el);
+  });
+  o.hidden = false;
+}
+
+function showMenu() {
+  G.state = 'menu';
+  overlay(`<h2>🐾 Mahalle Dostları</h2>
+    <p>Mahallenin sokak kedi ve köpeklerine yardım et, onlara yuva bul. <b>5 gün</b> sürer.</p>`,
+    [{ t: '▶ Oyuna başla', primary: true, fn: () => { newGame(); startDay(true); } },
+     { t: '❓ Oyun açıklaması', fn: () => showHelp(showMenu) }]);
+}
+
+function showHelp(back) {
+  overlay(`<h2>❓ Oyun açıklaması</h2>
+    <p><b>Amaç:</b> Hayvanları doyur, sağlıklı yap ve yuva bul.</p>
+    <ul class="steps">
+      <li>1️⃣ 🏪 <b>Markete</b> git, mama al. 🥣 Kaplara mama koy. Hayvanlar kendi yer.</li>
+      <li>2️⃣ 💬 işaretli kişilerle <b>konuş</b>. Doğru cevap verirsen 🤝 destek artar.</li>
+      <li>3️⃣ Bir hayvanı <b>kucağına al</b>, 🏥 <b>veterinere</b> götür (aşı + kısırlaştırma).</li>
+      <li>4️⃣ Sonra 📋 <b>ilan panosuna</b> götür. Destek en az 20 ise yuva bulur.</li>
+    </ul>
+    <p><b>Kontroller:</b> ok tuşları / WASD ile yürü. Yakındaki şeyle <b>E</b> veya Boşluk ile işlem yap. <b>Q</b> ile hayvanı bırak. Telefonda ekrana dokun, alttaki düğmeleri kullan.</p>
+    <p class="fact">💡 Üstteki turuncu "görev" çubuğu sıradaki işi söyler.</p>`,
+    [{ t: 'Anladım', primary: true, fn: back }]);
+}
+
+function goalText() {
+  const p = G.player, al = live();
+  if (p.carry) return p.carry.vacc && p.carry.neut && !p.carry.sick ? `📋 ${p.carry.name} hazır! İlan panosuna götür` : `🏥 ${p.carry.name} için veterinere git`;
+  if (G.bowls.some(b => b.lvl === 0)) return G.food < 1 ? '🏪 Markete git, mama al' : '🥣 Boş mama kabını doldur';
+  if (G.support < 20) return '💬 İşaretli kişilerle konuş (destek artsın)';
+  if (al.some(a => a.vacc && a.neut && !a.sick)) return '🐈 Aşılı hayvanı kucağına al (E), ilan panosuna götür';
+  if (al.some(a => !(a.vacc && a.neut))) return '🐈 Bir hayvanı kucağına al (E), veterinere götür';
+  return '🌟 Harika! Mama kaplarını dolu tut';
+}
+
+/* ---------- gün akışı ---------- */
+function startDay(first) {
+  const news = [];
+  if (!first) {
+    G.day++;
+    const don = Math.floor(G.support * 0.4);
+    if (don > 0) { G.money += don; news.push(`💰 Mahalle bağışı: +${don}₺`); }
+    if (G.support >= 60) { G.food = Math.min(MAX_FOOD, G.food + 3); news.push('🍖 Komşular 3 mama bıraktı'); }
+    live().forEach(a => {
+      if (!a.vacc && !a.sick && Math.random() < 0.2) { a.sick = true; news.push(`🤒 ${a.name} hastalandı (aşısız olduğu için)`); }
+    });
+    let nb = 0;
+    live().filter(a => !a.neut && G.day - a.born >= 1).forEach(() => {
+      if (nb < 1 && live().length < 8 && Math.random() < 0.25) { addAnimal(true); nb++; }
+    });
+    if (nb) news.push(`🍼 Kısırlaştırılmamış hayvanlar yüzünden ${nb} yeni yavru doğdu`);
+  }
+  G.time = DAY_LEN; G.talked = {}; G.log = [];
+  G.state = 'dialog';
+  const body = first
+    ? `<p>Başlangıç için 150₺ var. Önce marketten mama al, boş kapları doldur. Takıldığında sağ üstteki ❓ düğmesine bas.</p>`
+    : (news.length ? '<ul>' + news.map(n => `<li>${n}</li>`).join('') + '</ul>' : '<p>Sakin bir sabah.</p>');
+  overlay(`<h2>📅 Gün ${G.day} / ${DAYS}</h2>${body}`, [{ t: 'Güne başla', primary: true, fn: () => { G.state = 'play'; } }]);
+}
+
+function endDay() {
+  G.state = 'dialog';
+  const alive = live();
+  const safe = alive.filter(a => a.vacc && a.neut).length;
+  const events = G.log.slice(-5);
+  const last = G.day >= DAYS;
+  overlay(`<h2>🌙 Gün ${G.day} bitti</h2>
+    <ul>
+      <li>🐾 Mahalledeki hayvan: <b>${alive.length}</b></li>
+      <li>💉 Aşılı ve kısırlaştırılmış: <b>${safe}</b></li>
+      <li>🏠 Yuva bulan: <b>${G.adopted}</b></li>
+      <li>🤝 Mahalle desteği: <b>${G.support}</b>/100</li>
+      <li>💰 Para: <b>${G.money}</b>₺</li>
+    </ul>
+    ${events.length ? '<p>Bugün olanlar:</p><ul>' + events.map(e => `<li>${e}</li>`).join('') + '</ul>' : ''}
+    <p class="fact">💡 ${FACTS[(G.day - 1) % FACTS.length]}</p>`,
+    [{ t: last ? 'Mahalle raporunu gör' : 'Yarına geç', primary: true, fn: last ? showReport : () => startDay(false) }]);
+}
+
+function showReport() {
+  const alive = live();
+  const safe = alive.filter(a => a.vacc && a.neut).length;
+  const score = G.adopted * 10 + safe * 6 + Math.round(G.support / 2);
+  const title = score >= 70 ? '🏆 Mahalle Kahramanı' : score >= 40 ? '🥈 Gönüllü Dost' : score >= 20 ? '🌱 Yolun Başındaki Gönüllü' : '🐾 Daha Çok Destek Lazım';
+  overlay(`<h2>📊 Mahalle Raporu</h2>
+    <p><b>${title}</b> · Puan: <b>${score}</b></p>
+    <ul>
+      <li>🏠 Yuva bulan hayvan: <b>${G.adopted}</b></li>
+      <li>💉 Aşılı ve kısırlaştırılmış: <b>${safe}</b> / ${alive.length}</li>
+      <li>🤝 Mahalle desteği: <b>${G.support}</b>/100</li>
+    </ul>
+    <p class="fact">Tek başına her şeyi yapamazdın. Komşularla konuşmak, aşı ve kısırlaştırma gibi kalıcı çözümler ve sahiplendirme, "sadece mama koymaktan" çok daha büyük fark yarattı. Sosyal sorumluluk, herkesi işin içine katabilmektir.</p>`,
+    [{ t: 'Tekrar oyna', primary: true, fn: showMenu }]);
+}
+
+/* ---------- etkileşim ---------- */
+function buy() {
+  if (G.food >= MAX_FOOD) return say('Çantan dolu.');
+  const n = Math.min(3, MAX_FOOD - G.food);
+  if (G.money < n * 5) return say('Yeterli paran yok (adet başı 5₺).');
+  G.money -= n * 5; G.food += n;
+  say(`🍖 ${n} mama aldın (−${n * 5}₺)`);
+}
+
+function fillBowl(b) {
+  if (G.food <= 0) return say('Mamanın bittiği için kabı dolduramıyorsun. Marketten al.');
+  if (b.lvl >= 3) return say('Kap zaten dolu.');
+  b.lvl++; G.food--;
+  say('🥣 Mama kabına koydun.');
+}
+
+function talk(n) {
+  if (G.talked[n.id]) return say(`${n.name} ile bugün konuştun. Yarın tekrar uğra.`);
+  const d = n.d[(G.talkCount[n.id] || 0) % n.d.length];
+  G.state = 'dialog';
+  overlay(`<h2>${n.e} ${n.name}</h2><p>${d.t}</p>`,
+    shuffle(d.c).map(c => ({ t: c.t, fn: () => {
+      G.talked[n.id] = true;
+      G.talkCount[n.id] = (G.talkCount[n.id] || 0) + 1;
+      G.support = clamp(G.support + c.s, 0, 100);
+      if (c.m) G.money += c.m;
+      if (c.f) G.food = Math.min(MAX_FOOD, G.food + c.f);
+      const delta = c.s === 0 ? '' : `<p class="${c.s > 0 ? 'up' : 'down'}">Mahalle desteği ${c.s > 0 ? '+' : ''}${c.s}</p>`;
+      G.log.push(`${n.e} ${n.name} ile konuştun (${c.s > 0 ? '+' : ''}${c.s} destek)`);
+      overlay(`<h2>${n.e} ${n.name}</h2><p>${c.r}</p>${delta}`, [{ t: 'Tamam', primary: true, fn: () => { G.state = 'play'; } }]);
+    } })));
+}
+
+function useVet() {
+  const a = G.player.carry;
+  if (!a) return say('Veterinere bir hayvan getirmelisin. Hayvanın yanında E ile kucağına al.');
+  const need = a.sick || !(a.vacc && a.neut) ? 20 : 0;
+  if (need === 0) return say(`${a.name} zaten sağlıklı, aşılı ve kısırlaştırılmış.`);
+  if (G.money < need) return say(`Yeterli paran yok: ${need}₺ gerekiyor.`);
+  G.money -= need;
+  const was = a.sick;
+  a.sick = false; a.sickDays = 0; a.vacc = true; a.neut = true; a.hunger = Math.min(a.hunger, 60);
+  note(`🏥 ${a.name} ${was ? 'tedavi edildi, ' : ''}aşılandı ve kısırlaştırıldı (−${need}₺)`);
+}
+
+function useBoard() {
+  const a = G.player.carry;
+  if (!a) return say('İlan için bir hayvan kucağında olmalı.');
+  if (!(a.vacc && a.neut)) return say('Önce veterinerde aşı ve kısırlaştırma gerekiyor.');
+  if (a.sick) return say('Hasta hayvana yuva bulunamaz, önce tedavi et.');
+  if (G.support < 20) return say('İlana kimse bakmadı. Önce mahalleli ile konuşup desteği artır (en az 20).');
+  a.gone = true; G.adopted++; G.player.carry = null;
+  note(`🏠 ${a.name} yeni yuvasına kavuştu!`);
+}
+
+function pickTarget() {
+  const p = G.player, T = [];
+  const add = (o, r, label, act) => {
+    const d = Math.hypot(o.x - p.x, o.y - p.y);
+    if (d <= r) T.push({ d, o, label, act });
+  };
+  add(BUILD.market, 80, 'Marketten mama al (3 adet, 15₺)', buy);
+  add(BUILD.vet, 80, p.carry ? 'Veteriner: tedavi, aşı ve kısırlaştırma' : 'Veteriner (hayvan getir)', useVet);
+  add(BUILD.board, 80, p.carry ? 'İlan ver: yuva bul' : 'İlan panosu (hayvan getir)', useBoard);
+  G.bowls.forEach(b => add(b, 45, G.food > 0 ? `Mama kabına mama koy (${b.lvl}/3)` : 'Kap (mama yok)', () => fillBowl(b)));
+  NPCS.forEach(n => add(n, 55, G.talked[n.id] ? `${n.name} (bugün konuştun)` : `Konuş: ${n.name}`, () => talk(n)));
+  if (!p.carry) {
+    live().forEach(a => {
+      add(a, 42, '', () => {
+        if (!a.sick && a.hunger > 35 && G.food > 0) {
+          G.food--; a.hunger = Math.max(0, a.hunger - 50);
+          say(`🍖 ${a.name} doydu.`);
+        } else {
+          p.carry = a; say(`${a.name} kucağında.`);
+        }
+      });
+      const t = T[T.length - 1];
+      if (t && t.o === a) t.label = !a.sick && a.hunger > 35 && G.food > 0 ? `Mama ver: ${a.name}` : `Kucağa al: ${a.name}${a.sick ? ' (hasta)' : ''}`;
+    });
+  }
+  T.sort((a, b) => a.d - b.d);
+  return T[0] || null;
+}
+
+function interact() {
+  if (G.state !== 'play') return;
+  const t = pickTarget();
+  if (t) t.act(); else say('Yakında etkileşim yok.');
+}
+function drop() {
+  if (G.state !== 'play') return;
+  const p = G.player;
+  if (!p.carry) return;
+  p.carry.x = p.x; p.carry.y = p.y + 20; p.carry.tx = null;
+  say(`${p.carry.name} yere bırakıldı.`);
+  p.carry = null;
+}
+
+/* ---------- güncelleme ---------- */
+function update(dt) {
+  if (G.state !== 'play') return;
+  G.time -= dt;
+  if (G.time <= 0) { G.time = 0; endDay(); return; }
+  const p = G.player;
+  let dx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+  let dy = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
+  if (dx || dy) { p.tx = null; }
+  else if (p.tx != null) {
+    const ex = p.tx - p.x, ey = p.ty - p.y, ed = Math.hypot(ex, ey);
+    if (ed > 4) { dx = ex / ed; dy = ey / ed; } else p.tx = null;
+  }
+  const len = Math.hypot(dx, dy);
+  if (len > 0) {
+    p.x = clamp(p.x + dx / len * 165 * dt, 20, W - 20);
+    p.y = clamp(p.y + dy / len * 165 * dt, 40, H - 20);
+  }
+  if (p.carry) { p.carry.x = p.x; p.carry.y = p.y; }
+  G.animals.forEach(a => updateAnimal(a, dt));
+}
+
+function updateAnimal(a, dt) {
+  if (a.gone || G.player.carry === a) return;
+  a.hunger = Math.min(100, a.hunger + HUNGER * dt);
+  if (a.hunger >= 100 && !a.sick) { a.sick = true; note(`🤒 ${a.name} açlıktan hastalandı!`); }
+  a.eatCd -= dt;
+  const sp = a.sick ? 6 : 40;
+  let hunting = false;
+  if (a.hunger > 45 && !a.sick) {
+    let best = null, bd = 1e9;
+    G.bowls.forEach(b => {
+      if (b.lvl > 0) { const d = Math.hypot(b.x - a.x, b.y - a.y); if (d < bd) { bd = d; best = b; } }
+    });
+    if (best) { a.tx = best.x; a.ty = best.y + 14; hunting = true; }
+  }
+  if (!hunting) {
+    a.wait -= dt;
+    if (a.wait <= 0 || a.tx == null) {
+      a.tx = clamp(a.x + rand(-120, 120), 30, W - 30);
+      a.ty = clamp(a.y + rand(-90, 90), 170, H - 25);
+      a.wait = rand(3, 7);
+    }
+  }
+  const ex = a.tx - a.x, ey = a.ty - a.y, ed = Math.hypot(ex, ey);
+  if (ed > 3) { a.x += ex / ed * sp * dt; a.y += ey / ed * sp * dt; }
+  if (!a.sick && a.hunger > 25 && a.eatCd <= 0) {
+    for (const b of G.bowls) {
+      if (b.lvl > 0 && Math.hypot(b.x - a.x, b.y - a.y) < 30) {
+        b.lvl--; a.hunger = Math.max(0, a.hunger - 35); a.eatCd = 2;
+        break;
+      }
+    }
+  }
+}
+
+/* ---------- çizim ---------- */
+function em(ch, x, y, size) {
+  ctx.font = `${size}px ${FONT}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(ch, x, y);
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#b9dc95'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#e9e3d3'; ctx.fillRect(0, 0, W, 140);
+  ctx.fillStyle = '#d3caae'; ctx.fillRect(0, 138, W, 5);
+  ctx.fillStyle = '#d9cfae'; ctx.fillRect(0, 262, W, 34);
+  [[50, 210], [755, 420], [310, 455], [740, 230]].forEach(([x, y]) => em('🌳', x, y, 40));
+
+  Object.values(BUILD).forEach(b => { em(b.e, b.x, b.y, 54); ctx.font = `bold 12px ${FONT}`; ctx.fillStyle = '#4a463c'; ctx.fillText(b.n, b.x, b.y + 38); });
+
+  G.bowls.forEach(b => {
+    em('🥣', b.x, b.y, 30);
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = i < b.lvl ? '#e07a3f' : 'rgba(0,0,0,.2)';
+      ctx.beginPath(); ctx.arc(b.x - 12 + i * 12, b.y - 24, 4, 0, 7); ctx.fill();
+    }
+  });
+
+  NPCS.forEach(n => {
+    em(n.e, n.x, n.y, 34);
+    ctx.font = `12px ${FONT}`; ctx.fillStyle = '#3d3a32'; ctx.fillText(n.name, n.x, n.y + 26);
+    if (!G.talked[n.id] && G.state === 'play') em('💬', n.x + 18, n.y - 22, 16);
+  });
+
+  live().forEach(a => {
+    if (G.player.carry === a) return;
+    const sz = G.day - a.born < 2 && a.born ? 22 : 30;
+    em(a.type === 'cat' ? '🐈' : '🐕', a.x, a.y, sz);
+    if (a.sick) em('🤒', a.x + 14, a.y - 16, 16);
+    if (a.vacc && a.neut) em('💉', a.x - 16, a.y - 16, 13);
+    ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(a.x - 15, a.y + 18, 30, 4);
+    ctx.fillStyle = `hsl(${120 - a.hunger * 1.2},65%,45%)`; ctx.fillRect(a.x - 15, a.y + 18, 30 * (1 - a.hunger / 100), 4);
+    ctx.font = `10px ${FONT}`; ctx.fillStyle = a.sick && a.sickDays >= 1 ? '#c0483a' : '#3d3a32';
+    ctx.fillText(a.sick && a.sickDays >= 1 ? a.name + ' · ACİL!' : a.name, a.x, a.y + 31);
+  });
+
+  const t = G.state === 'play' ? pickTarget() : null;
+  if (t) {
+    ctx.strokeStyle = '#e07a3f'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.arc(t.o.x, t.o.y, 30, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+  }
+  setHint(t);
+
+  const p = G.player;
+  em('🧑', p.x, p.y, 36);
+  if (p.carry) em(p.carry.type === 'cat' ? '🐈' : '🐕', p.x, p.y - 32, 26);
+}
+
+let lastHint = '';
+function setHint(t) {
+  const txt = t && t.label ? 'E: ' + t.label : (G.player.carry ? `${G.player.carry.name} kucağında → veterinere götür` : '');
+  if (txt !== lastHint) { $('hint').textContent = txt; lastHint = txt; }
+}
+
+function updateHud() {
+  $('hDay').textContent = G.day;
+  const gt = goalText();
+  if ($('goal').textContent !== gt) $('goal').textContent = gt;
+  $('hMoney').textContent = G.money;
+  $('hFood').textContent = G.food;
+  $('hSup').style.width = G.support + '%';
+  const tf = $('hTime');
+  tf.style.width = (G.time / DAY_LEN * 100) + '%';
+  tf.style.background = G.time < 10 ? '#c0483a' : '';
+  const c = $('hCarry');
+  c.hidden = !G.player.carry;
+  if (G.player.carry) c.textContent = '🤲 ' + G.player.carry.name;
+}
+
+/* ---------- girdi ---------- */
+const BLOCK = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
+addEventListener('keydown', e => {
+  if (G.state === 'play' && BLOCK.includes(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  keys[e.code] = true;
+  if (e.code === 'KeyE' || e.code === 'Space') interact();
+  if (e.code === 'KeyQ') drop();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+cv.addEventListener('pointerdown', e => {
+  if (G.state !== 'play') return;
+  const r = cv.getBoundingClientRect();
+  G.player.tx = clamp((e.clientX - r.left) * W / r.width, 20, W - 20);
+  G.player.ty = clamp((e.clientY - r.top) * H / r.height, 40, H - 20);
+});
+$('bHelp').onclick = () => {
+  if (G.state === 'play') { G.state = 'dialog'; showHelp(() => { G.state = 'play'; }); }
+  else if (G.state === 'menu') showHelp(showMenu);
+};
+$('bE').onclick = interact;
+$('bQ').onclick = drop;
+
+/* ---------- döngü ---------- */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  updateHud();
+  requestAnimationFrame(frame);
+}
+
+newGame();
+showMenu();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
