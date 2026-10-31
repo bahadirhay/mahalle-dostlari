@@ -24,9 +24,10 @@
   canvas{display:block;width:100%;height:auto;touch-action:none}
   #toast{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);max-width:90%;background:rgba(30,30,30,.88);color:#fff;padding:8px 14px;border-radius:10px;font-size:.9rem;opacity:0;transition:opacity .25s;pointer-events:none;text-align:center}
   #toast.show{opacity:1}
-  #overlay{position:absolute;inset:0;background:rgba(20,20,20,.5);display:flex;align-items:center;justify-content:center;padding:12px;overflow:auto}
+  #overlay{position:fixed;inset:0;z-index:10;background:rgba(20,20,20,.55);display:flex;padding:12px;overflow:auto;-webkit-overflow-scrolling:touch}
+  .chip[hidden]{display:none}
   #overlay[hidden]{display:none}
-  .card{background:var(--card);border-radius:14px;padding:18px 20px;max-width:500px;width:100%;box-shadow:0 8px 30px rgba(0,0,0,.3)}
+  .card{background:var(--card);border-radius:14px;padding:18px 20px;max-width:500px;width:100%;margin:auto;box-shadow:0 8px 30px rgba(0,0,0,.3)}
   .card h2{margin:0 0 8px;font-size:1.15rem}
   .card p{margin:6px 0}
   .card ul{margin:6px 0;padding-left:20px}
@@ -37,10 +38,24 @@
   .up{color:var(--green);font-weight:600}.down{color:var(--red);font-weight:600}
   .warn{color:var(--red)}
   .fact{background:#fff6ee;border-left:4px solid var(--accent);padding:8px 10px;border-radius:6px;font-size:.92rem}
-  #bar{display:flex;align-items:center;gap:8px;margin-top:8px}
-  #hint{flex:1;font-size:.92rem;min-height:1.4em}
-  #bar button{padding:8px 14px;text-align:center}
+  #bar{margin-top:8px}
+  #hint{display:block;font-size:.92rem;min-height:1.4em}
+  #touch{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:8px}
+  #acts{display:flex;gap:8px}
+  #acts button{padding:8px 14px;text-align:center}
+  #dpad{display:none;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(2,64px);gap:6px}
+  #dpad button{padding:0;font-size:1.5rem;text-align:center}
+  #dpad .u{grid-column:2;grid-row:1}#dpad .l{grid-column:1;grid-row:2}#dpad .d{grid-column:2;grid-row:2}#dpad .r{grid-column:3;grid-row:2}
+  #dpad button,#acts button,.card button{touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   .help{font-size:.82rem;color:#6b675d;margin-top:10px}
+  @media (pointer:coarse),(max-width:700px){
+    #touch{justify-content:space-between}
+    #dpad{display:grid}
+    #acts{flex-direction:column}
+    #acts button{width:104px;height:64px;font-size:1rem;font-weight:600}
+    .help{display:none}
+    .card button{min-height:48px}
+  }
 </style>
 </head>
 <body>
@@ -62,8 +77,18 @@
   </div>
   <div id="bar">
     <span id="hint"></span>
-    <button id="bE">E · Etkileşim</button>
-    <button id="bQ">Q · Bırak</button>
+    <div id="touch">
+      <div id="dpad">
+        <button class="u" data-k="KeyW" aria-label="Yukarı">▲</button>
+        <button class="l" data-k="KeyA" aria-label="Sol">◀</button>
+        <button class="d" data-k="KeyS" aria-label="Aşağı">▼</button>
+        <button class="r" data-k="KeyD" aria-label="Sağ">▶</button>
+      </div>
+      <div id="acts">
+        <button id="bE">E · İşlem</button>
+        <button id="bQ">Q · Bırak</button>
+      </div>
+    </div>
   </div>
   <p class="help">Hareket: ok tuşları / WASD (ya da ekrana dokun) · E veya Boşluk: etkileşim · Q: kucaktaki hayvanı bırak</p>
 </div>
@@ -152,6 +177,7 @@ const FACTS = [
 
 let G, pool;
 const keys = {};
+const REACH = matchMedia('(pointer:coarse)').matches ? 1.4 : 1;
 
 function newGame() {
   pool = shuffle(NAMES);
@@ -222,7 +248,8 @@ function showHelp(back) {
       <li>3️⃣ Bir hayvanı <b>kucağına al</b>, 🏥 <b>veterinere</b> götür (aşı + kısırlaştırma).</li>
       <li>4️⃣ Sonra 📋 <b>ilan panosuna</b> götür. Destek en az 20 ise yuva bulur.</li>
     </ul>
-    <p><b>Kontroller:</b> ok tuşları / WASD ile yürü. Yakındaki şeyle <b>E</b> veya Boşluk ile işlem yap. <b>Q</b> ile hayvanı bırak. Telefonda ekrana dokun, alttaki düğmeleri kullan.</p>
+    <p><b>Bilgisayarda:</b> ok tuşları / WASD ile yürü, <b>E</b> veya Boşluk ile işlem yap, <b>Q</b> ile hayvanı bırak.</p>
+    <p><b>Telefonda:</b> alttaki ◀▲▼▶ oklarıyla yürü (ya da oyun alanına dokun). Yakındaki şey için <b>E · İşlem</b> düğmesine bas. <b>Q · Bırak</b> hayvanı yere koyar.</p>
     <p class="fact">💡 Üstteki turuncu "görev" çubuğu sıradaki işi söyler.</p>`,
     [{ t: 'Anladım', primary: true, fn: back }]);
 }
@@ -356,7 +383,7 @@ function pickTarget() {
   const p = G.player, T = [];
   const add = (o, r, label, act) => {
     const d = Math.hypot(o.x - p.x, o.y - p.y);
-    if (d <= r) T.push({ d, o, label, act });
+    if (d <= r * REACH) T.push({ d, o, label, act });
   };
   add(BUILD.market, 80, 'Marketten mama al (3 adet, 15₺)', buy);
   add(BUILD.vet, 80, p.carry ? 'Veteriner: tedavi, aşı ve kısırlaştırma' : 'Veteriner (hayvan getir)', useVet);
@@ -538,11 +565,19 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
-cv.addEventListener('pointerdown', e => {
+function goTo(e) {
   if (G.state !== 'play') return;
   const r = cv.getBoundingClientRect();
   G.player.tx = clamp((e.clientX - r.left) * W / r.width, 20, W - 20);
   G.player.ty = clamp((e.clientY - r.top) * H / r.height, 40, H - 20);
+}
+cv.addEventListener('pointerdown', goTo);
+cv.addEventListener('pointermove', e => { if (e.buttons) goTo(e); });
+document.querySelectorAll('#dpad button').forEach(b => {
+  const k = b.dataset.k;
+  b.addEventListener('pointerdown', e => { e.preventDefault(); keys[k] = true; });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => b.addEventListener(t, () => { keys[k] = false; }));
+  b.addEventListener('contextmenu', e => e.preventDefault());
 });
 $('bHelp').onclick = () => {
   if (G.state === 'play') { G.state = 'dialog'; showHelp(() => { G.state = 'play'; }); }
